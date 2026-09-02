@@ -1,22 +1,19 @@
 import streamlit as st
-from langchain.prompts import PromptTemplate
+from datetime import datetime
 
-# write
-# st.write("hello")
-# st.write([1, 2, 3, 4])
-# st.write({"x" : 1})
-# st.write(PromptTemplate)
+today = datetime.today().strftime("%H:%M:%S")
 
-# prompt = PromptTemplate.from_template("xxxx")
+st.title(today)
 
-# st.write(prompt)
+model = st.selectbox("Choose your model", ("GPT-3", "GPT-4"))
 
-# magic
-"hello"
-[1, 2, 3, 4]
-{"x": 1}
+if model == "GPT-3":
+    st.write("cheap")
+else:
+    st.write("no cheap")
 
-prompt = PromptTemplate.from_template("xxxx")
-prompt
+    name = st.text_input("What is your name?")
+    st.write(name)
 
-st.selectbox("Choose your model", ("GPT-3", "GPT-4"))
+    value = st.slider("temperature", min_value=0.1, max_value=1.0)
+    st.write(value)
