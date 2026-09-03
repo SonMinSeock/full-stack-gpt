@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from langchain.chat_models import ChatOpenAI
 from langchain.document_loaders import UnstructuredFileLoader
@@ -10,10 +11,12 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.callbacks.base import BaseCallbackHandler
 
+
 st.set_page_config(
     page_title="Streamlit 챌린지",
     page_icon="🤖",
 )
+
 
 # Session State
 if "messages" not in st.session_state:
@@ -24,10 +27,16 @@ if "memory" not in st.session_state:
         return_messages=True,
     )
 
+
 # File Embedding
 @st.cache_resource(show_spinner="Embedding file...")
 def embed_file(file, api_key):
     file_content = file.read()
+
+    # Streamlit Cloud에서도 필요한 캐시 폴더 자동 생성
+    os.makedirs("./.cache/files", exist_ok=True)
+    os.makedirs("./.cache/embeddings", exist_ok=True)
+
     file_path = f"./.cache/files/{file.name}"
 
     with open(file_path, "wb") as f:
@@ -65,6 +74,7 @@ def embed_file(file, api_key):
 
     return vectorstore.as_retriever()
 
+
 # Chat Functions
 def save_message(message, role):
     st.session_state["messages"].append(
@@ -74,12 +84,14 @@ def save_message(message, role):
         }
     )
 
+
 def send_message(message, role, save=True):
     with st.chat_message(role):
         st.markdown(message)
 
     if save:
         save_message(message, role)
+
 
 def paint_history():
     for message in st.session_state["messages"]:
@@ -89,7 +101,8 @@ def paint_history():
             save=False,
         )
 
-# Streaming Callback 정의
+
+# Streaming Callback
 class ChatCallbackHandler(BaseCallbackHandler):
 
     def on_llm_start(self, *args, **kwargs):
@@ -106,12 +119,14 @@ class ChatCallbackHandler(BaseCallbackHandler):
             "ai",
         )
 
+
 # RAG Functions
 def format_docs(docs):
     return "\n\n".join(
         document.page_content
         for document in docs
     )
+
 
 prompt = ChatPromptTemplate.from_messages([
     (
@@ -130,6 +145,8 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{question}"),
 ])
 
+
+# UI
 st.title("Streamlit 챌린지")
 
 st.markdown(
@@ -142,6 +159,8 @@ st.markdown(
     """
 )
 
+
+# Sidebar
 with st.sidebar:
     api_key = st.text_input(
         "OpenAI API Key",
@@ -185,7 +204,6 @@ if file and api_key:
             docs = retriever.invoke(
                 inputs["question"]
             )
-
             return format_docs(docs)
 
         memory = st.session_state["memory"]
@@ -202,6 +220,7 @@ if file and api_key:
                 ChatCallbackHandler(),
             ],
         )
+
         chain = (
             RunnablePassthrough.assign(
                 context=retrieve_docs,
@@ -226,6 +245,7 @@ if file and api_key:
                 "output": response.content,
             },
         )
+
 
 elif file and not api_key:
     st.info(
