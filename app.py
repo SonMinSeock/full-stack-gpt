@@ -1,15 +1,21 @@
 import os
+import nltk
 import streamlit as st
 from langchain.chat_models import ChatOpenAI
 from langchain.document_loaders import UnstructuredFileLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.embeddings import OpenAIEmbeddings, CacheBackedEmbeddings
-from langchain.vectorstores import Chroma
+from langchain.vectorstores import FAISS
 from langchain.storage import LocalFileStore
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.callbacks.base import BaseCallbackHandler
+
+
+# NLTK 데이터 다운로드
+nltk.download("punkt", quiet=True)
+nltk.download("punkt_tab", quiet=True)
 
 
 st.set_page_config(
@@ -33,7 +39,7 @@ if "memory" not in st.session_state:
 def embed_file(file, api_key):
     file_content = file.read()
 
-    # Streamlit Cloud에서도 필요한 캐시 폴더 자동 생성
+    # Streamlit Cloud에서 캐시 폴더 생성
     os.makedirs("./.cache/files", exist_ok=True)
     os.makedirs("./.cache/embeddings", exist_ok=True)
 
@@ -67,7 +73,8 @@ def embed_file(file, api_key):
         cache_dir,
     )
 
-    vectorstore = Chroma.from_documents(
+    # FAISS Vector Store
+    vectorstore = FAISS.from_documents(
         docs,
         cached_embeddings,
     )
@@ -128,6 +135,7 @@ def format_docs(docs):
     )
 
 
+# Prompt
 prompt = ChatPromptTemplate.from_messages([
     (
         "system",
@@ -176,6 +184,8 @@ with st.sidebar:
         "[View the code on GitHub](https://github.com/SonMinSeock/full-stack-gpt)"
     )
 
+
+# Document Chat
 if file and api_key:
     retriever = embed_file(
         file,
@@ -206,12 +216,14 @@ if file and api_key:
             )
             return format_docs(docs)
 
+        # Session State는 LCEL 실행 전에 접근
         memory = st.session_state["memory"]
 
         history = memory.load_memory_variables(
             {}
         )["history"]
 
+        # Streaming LLM
         llm = ChatOpenAI(
             temperature=0.1,
             openai_api_key=api_key,
@@ -221,6 +233,7 @@ if file and api_key:
             ],
         )
 
+        # RAG Chain
         chain = (
             RunnablePassthrough.assign(
                 context=retrieve_docs,
@@ -229,6 +242,7 @@ if file and api_key:
             | llm
         )
 
+        # AI Answer Streaming
         with st.chat_message("ai"):
             response = chain.invoke(
                 {
@@ -237,6 +251,7 @@ if file and api_key:
                 }
             )
 
+        # Conversation Memory 저장
         memory.save_context(
             {
                 "input": message,
@@ -252,6 +267,8 @@ elif file and not api_key:
         "Please enter your OpenAI API Key."
     )
 
+
+# 파일 제거 시 대화 기록과 Memory 초기화
 else:
     st.session_state["messages"] = []
 
