@@ -220,6 +220,17 @@ def split_file(file):
     docs = loader.load_and_split(text_splitter=splitter)
     return docs
 
+@st.cache_data(show_spinner="Making Quiz...")
+def run_quiz_chain(_docs, topic):
+    chain = {"context" : questions_chain} | formatting_chain | output_parser
+    return chain.invoke(_docs)
+
+@st.cache_data(show_spinner="Searching Wikipedia...")
+def wiki_search(term):
+    retriever = WikipediaRetriever(top_k_results=5)
+    docs = retriever.get_relevant_documents(term)
+    return docs
+
 with st.sidebar:
     docs = None
     choice = st.selectbox(
@@ -239,9 +250,7 @@ with st.sidebar:
     else:
         topic = st.text_input("Search Wikipedia...")
         if topic:
-            retriever = WikipediaRetriever(top_k_results=5)
-            with st.status("Searching Wikipedia..."):
-                docs = retriever.get_relevant_documents(topic)
+            docs = wiki_search(topic)
 
 
 if not docs:
@@ -258,6 +267,5 @@ else:
     start = st.button("Generate Quiz")
 
     if start:
-        chain = {"context" : questions_chain} | formatting_chain | output_parser
-        response = chain.invoke(docs)
+        response = run_quiz_chain(docs, topic if topic else file.name)
         st.write(response)
