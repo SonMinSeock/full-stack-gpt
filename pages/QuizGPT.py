@@ -2,27 +2,21 @@ from langchain.document_loaders import UnstructuredFileLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from langchain.callbacks import StreamingStdOutCallbackHandler
-import streamlit as st
 from langchain.retrievers import WikipediaRetriever
-from langchain.schema import BaseOutputParser
+import streamlit as st
 import wikipedia
 import json
+import os
 
 USER_AGENT = "QuizGPTBot/1.0 (https://github.com/sonminseock)"
 
 wikipedia.set_user_agent(USER_AGENT)
 
-wikipedia.wikipedia.requests.Session().headers.update({
-    "User-Agent": USER_AGENT
-})
-
-class JsonOutputParser(BaseOutputParser):
-    def parse(self, text):
-        text = text.replace("```", "").replace("json", "")
-        return json.loads(text)
-
-output_parser = JsonOutputParser()
+wikipedia.wikipedia.requests.Session().headers.update(
+    {
+        "User-Agent": USER_AGENT
+    }
+)
 
 st.set_page_config(
     page_title="QuizGPT",
@@ -31,208 +25,179 @@ st.set_page_config(
 
 st.title("QuizGPT")
 
-llm = ChatOpenAI(
-    temperature=0.1,
-    model="gpt-3.5-turbo-1106",
-    streaming=True,
-    callbacks=[StreamingStdOutCallbackHandler()],
-)
+# Function Calling Schema
+function = {
+    "name": "create_quiz",
+    "description": "Create a quiz from the provided context.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                        },
+                        "answers": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "answer": {
+                                        "type": "string",
+                                    },
+                                    "correct": {
+                                        "type": "boolean",
+                                    },
+                                },
+                                "required": [
+                                    "answer",
+                                    "correct",
+                                ],
+                            },
+                        },
+                    },
+                    "required": [
+                        "question",
+                        "answers",
+                    ],
+                },
+            },
+        },
+        "required": [
+            "questions",
+        ],
+    },
+}
 
+# 문서 → 문자열
 def format_docs(docs):
-    return "\n\n".join(document.page_content for document in docs)
-
-questions_prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """
-    You are a helpful assistant that is role playing as a teacher.
-         
-    Based ONLY on the following context make 10 questions to test the user's knowledge about the text.
-    
-    Each question should have 4 answers, three of them must be incorrect and one should be correct.
-         
-    Use (o) to signal the correct answer.
-         
-    Question examples:
-         
-    Question: What is the color of the ocean?
-    Answers: Red|Yellow|Green|Blue(o)
-         
-    Question: What is the capital or Georgia?
-    Answers: Baku|Tbilisi(o)|Manila|Beirut
-         
-    Question: When was Avatar released?
-    Answers: 2007|2001|2009(o)|1998
-         
-    Question: Who was Julius Caesar?
-    Answers: A Roman Emperor(o)|Painter|Actor|Model
-         
-    Your turn!
-         
-    Context: {context}
-""",
-            )
-        ]
+    return "\n\n".join(
+        document.page_content
+        for document in docs
     )
 
-questions_chain = {"context": format_docs} | questions_prompt | llm
-
-formatting_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """
-    You are a powerful formatting algorithm.
-     
-    You format exam questions into JSON format.
-    Answers with (o) are the correct ones.
-     
-    Example Input:
-
-    Question: What is the color of the ocean?
-    Answers: Red|Yellow|Green|Blue(o)
-         
-    Question: What is the capital or Georgia?
-    Answers: Baku|Tbilisi(o)|Manila|Beirut
-         
-    Question: When was Avatar released?
-    Answers: 2007|2001|2009(o)|1998
-         
-    Question: Who was Julius Caesar?
-    Answers: A Roman Emperor(o)|Painter|Actor|Model
-    
-     
-    Example Output:
-     
-    ```json
-    {{ "questions": [
-            {{
-                "question": "What is the color of the ocean?",
-                "answers": [
-                        {{
-                            "answer": "Red",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Yellow",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Green",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Blue",
-                            "correct": true
-                        }},
-                ]
-            }},
-                        {{
-                "question": "What is the capital or Georgia?",
-                "answers": [
-                        {{
-                            "answer": "Baku",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Tbilisi",
-                            "correct": true
-                        }},
-                        {{
-                            "answer": "Manila",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Beirut",
-                            "correct": false
-                        }},
-                ]
-            }},
-                        {{
-                "question": "When was Avatar released?",
-                "answers": [
-                        {{
-                            "answer": "2007",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "2001",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "2009",
-                            "correct": true
-                        }},
-                        {{
-                            "answer": "1998",
-                            "correct": false
-                        }},
-                ]
-            }},
-            {{
-                "question": "Who was Julius Caesar?",
-                "answers": [
-                        {{
-                            "answer": "A Roman Emperor",
-                            "correct": true
-                        }},
-                        {{
-                            "answer": "Painter",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Actor",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Model",
-                            "correct": false
-                        }},
-                ]
-            }}
-        ]
-     }}
-    ```
-    Your turn!
-
-    Questions: {context}
-
-""",
-        )
-    ]
-)
-
-formatting_chain = formatting_prompt | llm
-
+# 파일 분할
 @st.cache_data(show_spinner="Loading file...")
 def split_file(file):
+
     file_content = file.read()
+
+    os.makedirs(
+        "./.cache/quiz_files",
+        exist_ok=True,
+    )
+
     file_path = f"./.cache/quiz_files/{file.name}"
+
     with open(file_path, "wb") as f:
         f.write(file_content)
+
     splitter = CharacterTextSplitter.from_tiktoken_encoder(
         separator="\n",
         chunk_size=600,
         chunk_overlap=100,
     )
+
     loader = UnstructuredFileLoader(file_path)
-    docs = loader.load_and_split(text_splitter=splitter)
+
+    docs = loader.load_and_split(
+        text_splitter=splitter
+    )
+
     return docs
 
-@st.cache_data(show_spinner="Making Quiz...")
-def run_quiz_chain(_docs, topic):
-    chain = {"context" : questions_chain} | formatting_chain | output_parser
-    return chain.invoke(_docs)
-
+# Wikipedia 검색
 @st.cache_data(show_spinner="Searching Wikipedia...")
 def wiki_search(term):
-    retriever = WikipediaRetriever(top_k_results=5)
+    retriever = WikipediaRetriever(
+        top_k_results=5
+    )
     docs = retriever.get_relevant_documents(term)
     return docs
 
+# Function Calling으로 Quiz 생성
+@st.cache_data(show_spinner="Making Quiz...")
+def run_quiz_chain(_docs, topic, difficulty, api_key):
+
+    llm = ChatOpenAI(
+        temperature=0.1,
+        openai_api_key=api_key,
+    ).bind(
+        function_call={
+            "name": "create_quiz"
+        },
+        functions=[
+            function
+        ],
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """
+You are a helpful teacher.
+
+Based ONLY on the following context,
+create 10 multiple choice questions.
+
+Each question must have exactly 4 answers.
+Only one answer must be correct.
+
+The difficulty of the quiz must be {difficulty}.
+
+Easy:
+Create simple questions that test basic facts
+directly stated in the context.
+
+Hard:
+Create more challenging questions that require
+careful understanding of the context.
+
+Context:
+
+{context}
+                """,
+            )
+        ]
+    )
+
+    chain = prompt | llm
+
+    response = chain.invoke(
+        {
+            "context": format_docs(_docs),
+            "difficulty": difficulty,
+        }
+    )
+
+    arguments = response.additional_kwargs[
+        "function_call"
+    ]["arguments"]
+
+    return json.loads(arguments)
+
+# Sidebar UI
 with st.sidebar:
-    docs = None
+    st.title("Settings")
+
+    api_key = st.text_input(
+        "OpenAI API Key",
+        type="password",
+        placeholder="sk-...",
+    )
+
+    difficulty = st.selectbox(
+        "Choose quiz difficulty",
+        (
+            "Easy",
+            "Hard",
+        ),
+    )
+
     choice = st.selectbox(
         "Choose what you want to use.",
         (
@@ -240,38 +205,146 @@ with st.sidebar:
             "Wikipedia Article",
         ),
     )
-    if choice == "File":
-        file = st.file_uploader(
-            "Upload a .docx , .txt or .pdf file",
-            type=["pdf", "txt", "docx"],
-        )
-        if file:
-            docs = split_file(file)
-    else:
-        topic = st.text_input("Search Wikipedia...")
-        if topic:
+
+    st.divider()
+
+    st.markdown(
+        "[View the source code on GitHub]"
+        "(https://github.com/sonminseock)"
+    )
+
+# API Key 확인
+if not api_key:
+    st.info(
+        "Enter your OpenAI API Key in the sidebar "
+        "to start the quiz."
+    )
+    st.stop()
+
+# 데이터 선택
+docs = None
+topic = None
+file = None
+
+if choice == "File":
+    file = st.sidebar.file_uploader(
+        "Upload a .docx, .txt or .pdf file",
+        type=[
+            "pdf",
+            "txt",
+            "docx",
+        ],
+    )
+    if file:
+        docs = split_file(file)
+else:
+    topic = st.sidebar.text_input(
+        "Search Wikipedia..."
+    )
+
+    if topic:
+
+        try:
             docs = wiki_search(topic)
 
+        except Exception:
+            st.error(
+                "Wikipedia search failed. "
+                "Please try again or upload a file."
+            )
 
 if not docs:
     st.markdown(
         """
-    Welcome to QuizGPT.
-                
-    I will make a quiz from Wikipedia articles or files you upload to test your knowledge and help you study.
-                
-    Get started by uploading a file or searching on Wikipedia in the sidebar.
-    """
-    )
-else:
-    response = run_quiz_chain(docs, topic if topic else file.name)
-    with st.form("questions_form"):
-        for question in response["questions"]:
-            st.write(question["question"])
-            value = st.radio("Select an option.", [answer["answer"] for answer in question["answers"]], index=None)
-            if {"answer": value, "correct": True} in question["answers"]:
-                st.success("Correct!")
-            elif value is not None:
-                st.error("Wrong!")
+Welcome to QuizGPT.
 
-        button = st.form_submit_button()
+I will make a quiz from Wikipedia articles
+or files you upload to test your knowledge
+and help you study.
+
+### How to start
+
+1. Enter your OpenAI API Key.
+2. Choose Easy or Hard.
+3. Upload a file or search Wikipedia.
+4. Take the quiz!
+        """
+    )
+
+    st.stop()
+
+# Quiz 생성
+source_name = topic if topic else file.name
+
+response = run_quiz_chain(
+    docs,
+    source_name,
+    difficulty,
+    api_key,
+)
+
+questions = response["questions"]
+
+# Quiz Form UI
+with st.form("questions_form"):
+    user_answers = []
+    for index, question in enumerate(questions):
+        st.subheader(
+            f"Question {index + 1}"
+        )
+
+        st.write(
+            question["question"]
+        )
+
+        value = st.radio(
+            "Select an option.",
+            [
+                answer["answer"]
+                for answer
+                in question["answers"]
+            ],
+            index=None,
+            key=f"question_{index}",
+        )
+
+        user_answers.append(value)
+
+    submitted = st.form_submit_button(
+        "Submit Quiz"
+    )
+
+# 채점
+if submitted:
+    score = 0
+    for index, question in enumerate(questions):
+        selected_answer = user_answers[index]
+        if {
+            "answer": selected_answer,
+            "correct": True,
+        } in question["answers"]:
+            score += 1
+
+    st.divider()
+
+    st.subheader(
+        f"Score: {score} / {len(questions)}"
+    )
+
+    if score == len(questions):
+        st.success(
+            "Perfect score! 🎉"
+        )
+        st.balloons()
+
+    # 재시험
+    else:
+        st.error(
+            f"You got "
+            f"{len(questions) - score} "
+            f"question(s) wrong."
+        )
+        st.info(
+            "You can change your answers above "
+            "and submit the quiz again."
+        )
