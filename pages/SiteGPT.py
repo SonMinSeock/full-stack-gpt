@@ -1,13 +1,17 @@
-from langchain.document_loaders import AsyncChromiumLoader
-from langchain.document_transformers import Html2TextTransformer
+from langchain.document_loaders import SitemapLoader
 import streamlit as st
+
+@st.cache_data(show_spinner="Loading website...")
+def load_website(url):
+    loader = SitemapLoader(url)
+    loader.requests_per_second = 5
+    docs = loader.load()
+    return docs
 
 st.set_page_config(
     page_title="SiteGPT",
     page_icon="🖥️",
 )
-
-html2text_transformer = Html2TextTransformer() # HTML 받아서 Text로 변환 해준다.
 
 st.markdown(
     """
@@ -23,7 +27,9 @@ with st.sidebar:
     url = st.text_input("Write down a URL", placeholder="https://example.com")
 
 if url:
-    loader = AsyncChromiumLoader([url])
-    docs = loader.load()
-    transformed = html2text_transformer.transform_documents(docs)
-    st.write(transformed)
+    if ".xml" not in url:
+        with st.sidebar:
+            st.error("Please write down a Sitemap URL.")
+    else:
+        docs = load_website(url)
+        st.write(docs)
