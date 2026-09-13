@@ -1,277 +1,321 @@
 import os
-import nltk
 import streamlit as st
+from typing import Type
+from pydantic import BaseModel, Field
 from langchain.chat_models import ChatOpenAI
-from langchain.document_loaders import UnstructuredFileLoader
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings, CacheBackedEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.storage import LocalFileStore
-from langchain.memory import ConversationBufferMemory
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema.runnable import RunnablePassthrough
+from langchain.tools import BaseTool, DuckDuckGoSearchResults
+from langchain.utilities import WikipediaAPIWrapper
+from langchain.document_loaders import WebBaseLoader
+from langchain.agents import initialize_agent, AgentType
+from langchain.schema import SystemMessage
 from langchain.callbacks.base import BaseCallbackHandler
 
-
-# NLTK 데이터 다운로드
-nltk.download("punkt", quiet=True)
-nltk.download("punkt_tab", quiet=True)
-
-
 st.set_page_config(
-    page_title="Streamlit 챌린지",
-    page_icon="🤖",
+    page_title="Research Assistant",
+    page_icon="🔎",
 )
 
+st.title("Research Assistant")
+st.caption("AI research assistant powered by OpenAI")
 
-# Session State
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
-
-if "memory" not in st.session_state:
-    st.session_state["memory"] = ConversationBufferMemory(
-        return_messages=True,
-    )
-
-
-# File Embedding
-@st.cache_resource(show_spinner="Embedding file...")
-def embed_file(file, api_key):
-    file_content = file.read()
-
-    # Streamlit Cloud에서 캐시 폴더 생성
-    os.makedirs("./.cache/files", exist_ok=True)
-    os.makedirs("./.cache/embeddings", exist_ok=True)
-
-    file_path = f"./.cache/files/{file.name}"
-
-    with open(file_path, "wb") as f:
-        f.write(file_content)
-
-    cache_dir = LocalFileStore(
-        f"./.cache/embeddings/{file.name}"
-    )
-
-    splitter = CharacterTextSplitter.from_tiktoken_encoder(
-        separator="\n",
-        chunk_size=600,
-        chunk_overlap=100,
-    )
-
-    loader = UnstructuredFileLoader(file_path)
-
-    docs = loader.load_and_split(
-        text_splitter=splitter,
-    )
-
-    embeddings = OpenAIEmbeddings(
-        openai_api_key=api_key,
-    )
-
-    cached_embeddings = CacheBackedEmbeddings.from_bytes_store(
-        embeddings,
-        cache_dir,
-    )
-
-    # FAISS Vector Store
-    vectorstore = FAISS.from_documents(
-        docs,
-        cached_embeddings,
-    )
-
-    return vectorstore.as_retriever()
-
-
-# Chat Functions
-def save_message(message, role):
-    st.session_state["messages"].append(
-        {
-            "message": message,
-            "role": role,
-        }
-    )
-
-
-def send_message(message, role, save=True):
-    with st.chat_message(role):
-        st.markdown(message)
-
-    if save:
-        save_message(message, role)
-
-
-def paint_history():
-    for message in st.session_state["messages"]:
-        send_message(
-            message["message"],
-            message["role"],
-            save=False,
-        )
-
-
-# Streaming Callback
-class ChatCallbackHandler(BaseCallbackHandler):
-
-    def on_llm_start(self, *args, **kwargs):
-        self.message = ""
-        self.message_box = st.empty()
-
-    def on_llm_new_token(self, token, *args, **kwargs):
-        self.message += token
-        self.message_box.markdown(self.message)
-
-    def on_llm_end(self, *args, **kwargs):
-        save_message(
-            self.message,
-            "ai",
-        )
-
-
-# RAG Functions
-def format_docs(docs):
-    return "\n\n".join(
-        document.page_content
-        for document in docs
-    )
-
-
-# Prompt
-prompt = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        """
-        You are a helpful AI assistant.
-
-        Answer the user's question using only the following context.
-        If you don't know the answer based on the context, say you don't know.
-
-        Context:
-        {context}
-        """
-    ),
-    MessagesPlaceholder(variable_name="history"),
-    ("human", "{question}"),
-])
-
-
-# UI
-st.title("Streamlit 챌린지")
-
-st.markdown(
-    """
-    Welcome!
-
-    Use this chatbot to ask questions to an AI about your files!
-
-    Upload your file on the sidebar.
-    """
-)
-
-
-# Sidebar
 with st.sidebar:
+    st.title("Settings")
+
     api_key = st.text_input(
         "OpenAI API Key",
         type="password",
+        placeholder="sk-...",
     )
 
-    file = st.file_uploader(
-        "Upload a .txt .pdf or .docx file",
-        type=["pdf", "txt", "docx"],
-    )
+    st.divider()
 
     st.markdown(
-        "[View the code on GitHub](https://github.com/SonMinSeock/full-stack-gpt)"
+        "[Github Repository]"
+        "(https://github.com/sonminseock/full-stack-gpt)"
     )
 
+if not api_key:
+    st.info("Please enter your OpenAI API Key in the sidebar.")
+    st.stop()
 
-# Document Chat
-if file and api_key:
-    retriever = embed_file(
-        file,
-        api_key,
-    )
+os.environ["OPENAI_API_KEY"] = api_key
+class StreamHandler(BaseCallbackHandler):
 
-    send_message(
-        "I'm ready! Ask away!",
-        "ai",
-        save=False,
-    )
+    def __init__(self, container):
+        self.container = container
+        self.text = ""
 
-    paint_history()
+    def on_llm_new_token(self, token: str, **kwargs):
+        self.text += token
 
-    message = st.chat_input(
-        "Ask anything about your file..."
-    )
-
-    if message:
-        send_message(
-            message,
-            "human",
+        self.container.markdown(
+            self.text
         )
 
-        def retrieve_docs(inputs):
-            docs = retriever.invoke(
-                inputs["question"]
-            )
-            return format_docs(docs)
 
-        # Session State는 LCEL 실행 전에 접근
-        memory = st.session_state["memory"]
 
-        history = memory.load_memory_variables(
-            {}
-        )["history"]
+# Wikipedia Tool
+class WikipediaSearchToolArgsSchema(BaseModel):
 
-        # Streaming LLM
+    query: str = Field(
+        description="The topic to search for on Wikipedia."
+    )
+
+class WikipediaSearchTool(BaseTool):
+    name = "WikipediaSearchTool"
+
+    description = """
+    Use this tool to search Wikipedia for information
+    about a topic.
+
+    It takes a search query as an argument.
+    """
+
+    args_schema: Type[
+        WikipediaSearchToolArgsSchema
+    ] = WikipediaSearchToolArgsSchema
+
+    def _run(self, query):
+
+        wikipedia = WikipediaAPIWrapper()
+
+        return wikipedia.run(query)
+
+# DuckDuckGo Tool
+class DuckDuckGoSearchToolArgsSchema(BaseModel):
+    query: str = Field(
+        description="The query to search for on DuckDuckGo."
+    )
+
+class DuckDuckGoSearchTool(BaseTool):
+    name = "DuckDuckGoSearchTool"
+
+    description = """
+    Use this tool to search the web using DuckDuckGo.
+
+    Use it when you need to find websites or additional
+    information about a topic.
+
+    The results may contain URLs that can be passed to
+    WebsiteScrapingTool.
+    """
+
+    args_schema: Type[
+        DuckDuckGoSearchToolArgsSchema
+    ] = DuckDuckGoSearchToolArgsSchema
+
+    def _run(self, query):
+
+        ddg = DuckDuckGoSearchResults()
+
+        return ddg.run(query)
+
+# Website Scraping Tool
+class WebsiteScrapingToolArgsSchema(BaseModel):
+    url: str = Field(
+        description="The URL of the website to scrape."
+    )
+
+class WebsiteScrapingTool(BaseTool):
+    name = "WebsiteScrapingTool"
+
+    description = """
+    Use this tool to extract the text content of a website.
+
+    Pass a complete URL found from DuckDuckGo search results.
+
+    Example:
+    https://example.com/article
+    """
+
+    args_schema: Type[
+        WebsiteScrapingToolArgsSchema
+    ] = WebsiteScrapingToolArgsSchema
+
+    def _run(self, url):
+
+        loader = WebBaseLoader(url)
+
+        docs = loader.load()
+
+        return "\n\n".join(
+            doc.page_content
+            for doc in docs
+        )
+
+# Save To File Tool
+
+class SaveToFileToolArgsSchema(BaseModel):
+    content: str = Field(
+        description=(
+            "The complete research content "
+            "that should be saved."
+        )
+    )
+
+class SaveToFileTool(BaseTool):
+    name = "SaveToFileTool"
+
+    description = """
+    Use this tool to save the completed research report
+    to research.txt.
+
+    You MUST use this tool after completing the research.
+
+    Pass the entire final research report as the
+    content argument.
+    """
+
+    args_schema: Type[
+        SaveToFileToolArgsSchema
+    ] = SaveToFileToolArgsSchema
+
+    def _run(self, content):
+
+        os.makedirs(
+            "./files/research",
+            exist_ok=True,
+        )
+
+        filename = "./files/research/research.txt"
+
+        with open(
+            filename,
+            "w",
+            encoding="utf-8",
+        ) as file:
+            file.write(content)
+
+        return (
+            f"Research successfully saved to {filename}"
+        )
+
+# Conversation History
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+
+for message in st.session_state["messages"]:
+    with st.chat_message(
+        message["role"]
+    ):
+        st.markdown(
+            message["content"]
+        )
+
+message = st.chat_input(
+    "What do you want to research?"
+)
+
+if message:
+    st.session_state["messages"].append(
+        {
+            "role": "user",
+            "content": message,
+        }
+    )
+
+    with st.chat_message("user"):
+        st.markdown(message)
+
+    with st.chat_message("assistant"):
+        status = st.status(
+            "🔎 Researching...",
+            expanded=True,
+        )
+
+        status.write(
+            "Searching for information..."
+        )
+
+        stream_container = st.empty()
+
+        stream_handler = StreamHandler(
+            stream_container
+        )
+
         llm = ChatOpenAI(
             temperature=0.1,
-            openai_api_key=api_key,
             streaming=True,
             callbacks=[
-                ChatCallbackHandler(),
+                stream_handler
             ],
         )
 
-        # RAG Chain
-        chain = (
-            RunnablePassthrough.assign(
-                context=retrieve_docs,
-            )
-            | prompt
-            | llm
+        agent = initialize_agent(
+            llm=llm,
+            verbose=True,
+            agent=AgentType.OPENAI_FUNCTIONS,
+            handle_parsing_errors=True,
+            tools=[
+                WikipediaSearchTool(),
+                DuckDuckGoSearchTool(),
+                WebsiteScrapingTool(),
+                SaveToFileTool(),
+            ],
+            agent_kwargs={
+                "system_message": SystemMessage(
+                    content="""
+                    You are a research assistant.
+
+                    When the user asks you to research a topic:
+
+                    1. Search Wikipedia and DuckDuckGo.
+
+                    2. Find useful websites from the
+                       search results.
+
+                    3. Visit useful websites using
+                       WebsiteScrapingTool.
+
+                    4. Use the collected information
+                       to write a detailed research report.
+
+                    5. Include the sources used.
+
+                    6. ALWAYS invoke SaveToFileTool
+                       with the complete research report.
+
+                    You MUST invoke SaveToFileTool before
+                    returning your final answer.
+
+                    Never finish a research task without
+                    saving the report.
+                    """
+                )
+            },
         )
 
-        # AI Answer Streaming
-        with st.chat_message("ai"):
-            response = chain.invoke(
-                {
-                    "question": message,
-                    "history": history,
-                }
+        try:
+            result = agent.invoke(
+                message
             )
 
-        # Conversation Memory 저장
-        memory.save_context(
-            {
-                "input": message,
-            },
-            {
-                "output": response.content,
-            },
-        )
+            answer = result["output"]
 
+            status.update(
+                label="✅ Research complete!",
+                state="complete",
+                expanded=False,
+            )
 
-elif file and not api_key:
-    st.info(
-        "Please enter your OpenAI API Key."
-    )
+        except Exception as e:
+            answer = (
+                f"An error occurred: {e}"
+            )
 
+            status.update(
+                label="❌ Research failed",
+                state="error",
+                expanded=True,
+            )
 
-# 파일 제거 시 대화 기록과 Memory 초기화
-else:
-    st.session_state["messages"] = []
+            stream_container.error(
+                answer
+            )
 
-    st.session_state["memory"] = ConversationBufferMemory(
-        return_messages=True,
+    st.session_state["messages"].append(
+        {
+            "role": "assistant",
+            "content": answer,
+        }
     )
